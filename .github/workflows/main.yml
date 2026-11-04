@@ -1,0 +1,93 @@
+name: PicoClaw ARMv7 build (M8S / S812)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-armv7:
+    name: Build Linux ARMv7 binary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PicoClaw upstream main
+        uses: actions/checkout@v7
+        with:
+          repository: sipeed/picoclaw
+          ref: main
+          path: picoclaw-src
+          fetch-depth: 0
+
+      - name: Set up Go from upstream go.mod
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: picoclaw-src/go.mod
+          cache: false
+
+      - name: Record source revision
+        id: source
+        working-directory: picoclaw-src
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Built upstream revision: $(git rev-parse HEAD)"
+          go version
+
+      - name: Build ARMv7 binary
+        working-directory: picoclaw-src
+        shell: bash
+        run: |
+          set -euo pipefail
+          make build-linux-arm
+          test -s build/picoclaw-linux-arm
+          chmod 0755 build/picoclaw-linux-arm
+          file build/picoclaw-linux-arm
+          readelf -h build/picoclaw-linux-arm | grep -E 'Class:|Machine:'
+          readelf -h build/picoclaw-linux-arm | grep -q 'ELF32'
+          readelf -h build/picoclaw-linux-arm | grep -q 'ARM'
+
+      - name: Package binary and checksum
+        id: package
+        working-directory: picoclaw-src
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist
+          cp build/picoclaw-linux-arm ../dist/picoclaw
+          chmod 0755 ../dist/picoclaw
+          cd ../dist
+          sha256sum picoclaw > SHA256SUMS
+          tar -czf picoclaw-linux-armv7.tar.gz picoclaw SHA256SUMS
+          echo "asset=picoclaw-linux-armv7.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release in this fork
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_SHA: ${{ steps.source.outputs.sha }}
+          SHORT_SHA: ${{ steps.source.outputs.short_sha }}
+          ASSET: ${{ steps.package.outputs.asset }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="m8s-armv7-${GITHUB_RUN_ID}"
+          NOTES=$(cat <<EOF
+          ARMv7 hard-float binary for 32-bit Linux (e.g. Amlogic S812 / AlexELEC).
+
+          Upstream: https://github.com/sipeed/picoclaw
+          Upstream commit: $UPSTREAM_SHA
+          Target: GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0
+          Build: make build-linux-arm
+
+          This is a custom build, not an official PicoClaw release. The binary still needs runtime testing on the target device.
+          EOF
+          )
+          gh release create "$TAG" \
+            "dist/$ASSET" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "PicoClaw ARMv7 build $SHORT_SHA" \
+            --latest \
+            --notes "$NOTES"
+          echo "Published release tag: $TAG"
