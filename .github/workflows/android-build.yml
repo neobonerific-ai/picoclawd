@@ -25,6 +25,16 @@ jobs:
           go-version-file: picoclaw-src/go.mod
           cache: false
 
+      - name: Install Android NDK
+        run: |
+          set -euo pipefail
+          NDK_VERSION="r27b"
+          NDK_ZIP="android-ndk-${NDK_VERSION}-linux.zip"
+          wget -q "https://dl.google.com/android/repository/${NDK_ZIP}" -O /tmp/ndk.zip
+          unzip -q /tmp/ndk.zip -d /opt
+          echo "NDK_HOME=/opt/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
+          echo "/opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+
       - name: Record source revision
         id: source
         working-directory: picoclaw-src
@@ -50,7 +60,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p build
-          GOOS=android GOARCH=arm GOARM=7 go build -tags stdjson -ldflags "-s -w \
+          export CGO_ENABLED=1
+          export CC=armv7a-linux-androideabi32-clang
+          export CXX=armv7a-linux-androideabi32-clang++
+          export GOOS=android
+          export GOARCH=arm
+          export GOARM=7
+          go build -tags stdjson -ldflags "-s -w \
             -X github.com/sipeed/picoclaw/pkg/config.Version=${{ steps.source.outputs.sha }} \
             -X github.com/sipeed/picoclaw/pkg/config.GitCommit=${{ steps.source.outputs.short_sha }} \
             -X github.com/sipeed/picoclaw/pkg/config.BuildTime=$(date +%FT%T%z) \
@@ -88,8 +104,8 @@ jobs:
 
           Upstream: https://github.com/sipeed/picoclaw
           Upstream commit: $UPSTREAM_SHA
-          Target: GOOS=android GOARCH=arm GOARM=7 CGO_ENABLED=0
-          Build: go build -tags stdjson
+          Target: GOOS=android GOARCH=arm GOARM=7 CGO_ENABLED=1
+          Build: go build -tags stdjson with Android NDK r27b
 
           This is a custom build, not an official PicoClaw release. The binary still needs runtime testing on the target device.
           EOF
