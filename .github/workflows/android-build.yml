@@ -34,6 +34,8 @@ jobs:
           unzip -q /tmp/ndk.zip -d /opt
           echo "NDK_HOME=/opt/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
           echo "/opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin" >> "$GITHUB_PATH"
+          # Mindest-API-Level Android 5.1.1 Lollipop (API 22)
+          echo "ANDROID_API_LEVEL=22" >> "$GITHUB_ENV"
 
       - name: Record source revision
         id: source
@@ -61,11 +63,13 @@ jobs:
           set -euo pipefail
           mkdir -p build
           export CGO_ENABLED=1
-          export CC=armv7a-linux-androideabi32-clang
-          export CXX=armv7a-linux-androideabi32-clang++
+          export CC=armv7a-linux-androideabi22-clang
+          export CXX=armv7a-linux-androideabi22-clang++
           export GOOS=android
           export GOARCH=arm
           export GOARM=7
+          export CFLAGS="-D__ANDROID_API__=22"
+          export LDFLAGS="-Wl,-z,nocopyreloc"
           go build -tags stdjson -ldflags "-s -w \
             -X github.com/sipeed/picoclaw/pkg/config.Version=${{ steps.source.outputs.sha }} \
             -X github.com/sipeed/picoclaw/pkg/config.GitCommit=${{ steps.source.outputs.short_sha }} \
@@ -104,7 +108,7 @@ jobs:
 
           Upstream: https://github.com/sipeed/picoclaw
           Upstream commit: $UPSTREAM_SHA
-          Target: GOOS=android GOARCH=arm GOARM=7 CGO_ENABLED=1
+          Target: GOOS=android GOARCH=arm GOARM=7 CGO_ENABLED=1 Android API 22 (Lollipop 5.1.1)
           Build: go build -tags stdjson with Android NDK r27b
 
           This is a custom build, not an official PicoClaw release. The binary still needs runtime testing on the target device.
