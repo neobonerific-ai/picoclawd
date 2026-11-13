@@ -1,0 +1,103 @@
+name: PicoClaw Android ARM7a Build (M8S / S812)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-android-arm7a:
+    name: Build Android ARM7a binary
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PicoClaw upstream main (latest commit)
+        uses: actions/checkout@v7
+        with:
+          repository: sipeed/picoclaw
+          ref: main
+          path: picoclaw-src
+          fetch-depth: 0
+
+      - name: Set up Go from upstream go.mod
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: picoclaw-src/go.mod
+          cache: false
+
+      - name: Record source revision
+        id: source
+        working-directory: picoclaw-src
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "short_sha=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
+          echo "Built upstream revision: $(git rev-parse HEAD)"
+          go version
+
+      - name: Generate workspace assets
+        working-directory: picoclaw-src
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -r ./cmd/picoclaw/workspace 2>/dev/null || true
+          GOOS=$($GO env GOHOSTOS) GOARCH=$($GO env GOHOSTARCH) go generate ./...
+
+      - name: Build Android ARM7a binary
+        working-directory: picoclaw-src
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          GOOS=android GOARCH=arm GOARM=7 go build -tags stdjson -ldflags "-s -w \
+            -X github.com/sipeed/picoclaw/pkg/config.Version=${{ steps.source.outputs.sha }} \
+            -X github.com/sipeed/picoclaw/pkg/config.GitCommit=${{ steps.source.outputs.short_sha }} \
+            -X github.com/sipeed/picoclaw/pkg/config.BuildTime=$(date +%FT%T%z) \
+            -X github.com/sipeed/picoclaw/pkg/config.GoVersion=$(go env GOVERSION)" \
+            -o build/picoclaw-android-arm7a ./cmd/picoclaw
+          test -s build/picoclaw-android-arm7a
+          file build/picoclaw-android-arm7a
+
+      - name: Package binary and checksum
+        id: package
+        working-directory: picoclaw-src
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ../dist
+          cp build/picoclaw-android-arm7a ../dist/picoclaw
+          chmod 0755 ../dist/picoclaw
+          cd ../dist
+          sha256sum picoclaw > SHA256SUMS
+          tar -czf picoclaw-android-arm7a.tar.gz picoclaw SHA256SUMS
+          echo "asset=picoclaw-android-arm7a.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release in this fork
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_SHA: ${{ steps.source.outputs.sha }}
+          SHORT_SHA: ${{ steps.source.outputs.short_sha }}
+          ASSET: ${{ steps.package.outputs.asset }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="m8s-android-arm7a-${GITHUB_RUN_ID}"
+          NOTES=$(cat <<EOF
+          Android ARM7a (armeabi-v7a) binary for 32-bit Android (e.g. Amlogic S812 / M8S boxes).
+
+          Upstream: https://github.com/sipeed/picoclaw
+          Upstream commit: $UPSTREAM_SHA
+          Target: GOOS=android GOARCH=arm GOARM=7 CGO_ENABLED=0
+          Build: go build -tags stdjson
+
+          This is a custom build, not an official PicoClaw release. The binary still needs runtime testing on the target device.
+          EOF
+          )
+          gh release create "$TAG" \
+            "dist/$ASSET" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "PicoClaw Android ARM7a build $SHORT_SHA" \
+            --latest \
+            --notes "$NOTES"
+          echo "Published release tag: $TAG"
